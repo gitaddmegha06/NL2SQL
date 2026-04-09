@@ -1,95 +1,97 @@
-from vanna_setup import agent
+import asyncio
 import logging
+from vanna_setup import agent
+from vanna.core.tool import ToolContext
+from vanna.core.user import User
 
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 
-# 15 Domain-specific Q&A Pairs required in Step 5
-# Must be SELECT ONLY per instructions
+# qa pairs
 qa_pairs = [
-    # Patient queries
     {
-        "question": "How many patients do we have?",
-        "sql": "SELECT COUNT(*) AS total_patients FROM patients"
+        "question": "How many total patients are registered in the clinic?",
+        "sql": "SELECT COUNT(*) FROM patients"
     },
     {
-        "question": "Which city has the most patients?",
-        "sql": "SELECT city, COUNT(*) AS patient_count FROM patients GROUP BY city ORDER BY patient_count DESC LIMIT 1"
+        "question": "Who is the doctor with the most appointments?",
+        "sql": "SELECT d.name, COUNT(a.id) as count FROM doctors d JOIN appointments a ON d.id = a.doctor_id GROUP BY d.id ORDER BY count DESC LIMIT 1"
     },
     {
-        "question": "List all female patients from Mumbai.",
-        "sql": "SELECT first_name, last_name, gender, city FROM patients WHERE gender = 'Female' AND city = 'Mumbai'"
+        "question": "What is the total revenue generated from all paid invoices?",
+        "sql": "SELECT SUM(paid_amount) FROM invoices WHERE status = 'Paid'"
     },
     {
-        "question": "What is the breakdown of patients by gender?",
-        "sql": "SELECT gender, COUNT(*) AS patient_count FROM patients GROUP BY gender"
-    },
-    
-    # Doctor queries
-    {
-        "question": "List all doctors and their specializations.",
-        "sql": "SELECT name, specialization, department FROM doctors"
+        "question": "List all doctors in the 'Cardiology' department.",
+        "sql": "SELECT name FROM doctors WHERE department = 'Cardiology Department'"
     },
     {
-        "question": "Which doctor has the most appointments?",
-        "sql": "SELECT d.name, COUNT(a.id) AS appointment_count FROM doctors d JOIN appointments a ON d.id = a.doctor_id GROUP BY d.name ORDER BY appointment_count DESC LIMIT 1"
+        "question": "Which city has the highest number of patients?",
+        "sql": "SELECT city, COUNT(*) as count FROM patients GROUP BY city ORDER BY count DESC LIMIT 1"
     },
     {
-        "question": "How many doctors are in the Cardiology department?",
-        "sql": "SELECT COUNT(*) AS total_doctors FROM doctors WHERE department = 'Cardiology Department'"
-    },
-
-    # Appointment queries
-    {
-        "question": "Show me appointments for last month.",
-        "sql": "SELECT * FROM appointments WHERE appointment_date >= date('now', '-1 month') AND appointment_date < date('now', 'start of month')"
+        "question": "Show the total number of appointments scheduled for each month.",
+        "sql": "SELECT strftime('%Y-%m', appointment_date) as month, COUNT(*) FROM appointments GROUP BY month"
     },
     {
-        "question": "How many cancelled appointments last quarter?",
-        "sql": "SELECT COUNT(*) AS cancelled_count FROM appointments WHERE status = 'Cancelled' AND appointment_date >= date('now', '-3 months')"
+        "question": "What is the average cost of all treatments provided?",
+        "sql": "SELECT AVG(cost) FROM treatments"
     },
     {
-        "question": "What percentage of appointments are no-shows?",
-        "sql": "SELECT (CAST(SUM(CASE WHEN status = 'No-Show' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*)) * 100 AS no_show_percentage FROM appointments"
-    },
-
-    # Financial queries
-    {
-        "question": "What is the total revenue?",
-        "sql": "SELECT SUM(total_amount) AS total_revenue FROM invoices"
+        "question": "How many female patients are registered from Mumbai?",
+        "sql": "SELECT COUNT(*) FROM patients WHERE gender = 'Female' AND city = 'Mumbai'"
     },
     {
-        "question": "Show revenue by doctor.",
-        "sql": "SELECT d.name, SUM(i.total_amount) AS total_revenue FROM invoices i JOIN appointments a ON a.patient_id = i.patient_id JOIN doctors d ON d.id = a.doctor_id GROUP BY d.name ORDER BY total_revenue DESC"
+        "question": "List the names of patients who have cancelled their appointments.",
+        "sql": "SELECT DISTINCT p.first_name, p.last_name FROM patients p JOIN appointments a ON p.id = a.patient_id WHERE a.status = 'Cancelled'"
     },
     {
-        "question": "Show unpaid invoices.",
-        "sql": "SELECT i.id, p.first_name, p.last_name, i.total_amount, i.paid_amount, i.status FROM invoices i JOIN patients p ON i.patient_id = p.id WHERE i.status != 'Paid'"
+        "question": "Which doctor specializes in 'Pediatrics'?",
+        "sql": "SELECT name FROM doctors WHERE specialization = 'Pediatrics'"
     },
-    
-    # Time-based / Trend queries
     {
-        "question": "Show patient registration trend by month.",
-        "sql": "SELECT strftime('%Y-%m', registered_date) AS registration_month, COUNT(*) AS new_patients FROM patients GROUP BY registration_month ORDER BY registration_month ASC"
+        "question": "What is the total amount of unpaid invoices?",
+        "sql": "SELECT SUM(total_amount - paid_amount) FROM invoices WHERE status != 'Paid'"
     },
     {
         "question": "Show the busiest day of the week for appointments.",
-        "sql": "SELECT CASE strftime('%w', appointment_date) WHEN '0' THEN 'Sunday' WHEN '1' THEN 'Monday' WHEN '2' THEN 'Tuesday' WHEN '3' THEN 'Wednesday' WHEN '4' THEN 'Thursday' WHEN '5' THEN 'Friday' WHEN '6' THEN 'Saturday' END AS day_of_week, COUNT(*) AS appointment_count FROM appointments GROUP BY day_of_week ORDER BY appointment_count DESC LIMIT 1"
+        "sql": "SELECT strftime('%w', appointment_date) as day, COUNT(*) as count FROM appointments GROUP BY day ORDER BY count DESC LIMIT 1"
+    },
+    {
+        "question": "List treatments that take longer than 60 minutes.",
+        "sql": "SELECT treatment_name FROM treatments WHERE duration_minutes > 60"
+    },
+    {
+        "question": "How many appointments did 'Dr. Aarav Sharma' handle?",
+        "sql": "SELECT COUNT(*) FROM appointments a JOIN doctors d ON a.doctor_id = d.id WHERE d.name LIKE '%Aarav Sharma%'"
+    },
+    {
+        "question": "What is the breakdown of patients by gender?",
+        "sql": "SELECT gender, COUNT(*) FROM patients GROUP BY gender"
     }
 ]
 
-def seed_agent_memory():
+async def seed_agent_memory():
     logging.info(f"Seeding Agent Memory with {len(qa_pairs)} Q&A pairs...")
     
-    # The 'demo' agent memory allows saving questions explicitly, often wrapped in the Tool Registry.
-    # In Vanna 2.0 we trigger the SaveQuestionToolArgsTool or manually store them if using DemoAgentMemory.
+    context = ToolContext(
+        user=User(id="admin", roles=["admin"]),
+        conversation_id="seed-process",
+        request_id="seed-process",
+        agent_memory=agent.agent_memory
+    )
+    
     for pair in qa_pairs:
-        # Saving directly into memory to ensure robust learning initialization
-        agent.agent_memory.save_question_and_sql(
+        await agent.agent_memory.save_tool_usage(
             question=pair["question"],
-            sql=pair["sql"]
+            tool_name="run_sql",
+            args={"sql": pair["sql"]},
+            context=context,
+            success=True
         )
+        logging.info(f"Seeded: {pair['question']}")
         
     logging.info("Memory seeding complete.")
 
 if __name__ == "__main__":
-    seed_agent_memory()
+    asyncio.run(seed_agent_memory())

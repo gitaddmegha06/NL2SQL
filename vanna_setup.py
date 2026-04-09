@@ -10,15 +10,14 @@ from vanna.integrations.sqlite import SqliteRunner
 from vanna.integrations.local.agent_memory import DemoAgentMemory
 from vanna.integrations.openai import OpenAILlmService
 
-# Load environment variables (e.g., GROQ_API_KEY)
+
 load_dotenv()
 
 class SimpleUserResolver(UserResolver):
-    def resolve_user(self, context: RequestContext) -> User:
+    async def resolve_user(self, context: RequestContext) -> User:
         return User(id="default_user", roles=["admin"])
 
 def create_agent():
-    # 1. LLM Service (Using Groq as provider)
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY environment variable is not set. Please create a .env file and add it.")
@@ -26,33 +25,31 @@ def create_agent():
     llm_service = OpenAILlmService(
         api_key=api_key, 
         model="llama-3.3-70b-versatile",
-        client_kwargs={
-            "base_url": "https://api.groq.com/openai/v1"
-        }
+        base_url="https://api.groq.com/openai/v1"
     )
     
-    # 2. Database connection handled by built-in SqliteRunner
-    sqlite_runner = SqliteRunner(db_path="clinic.db")
+    # db-runner
+    sqlite_runner = SqliteRunner(database_path="clinic.db")
     
-    # 3. Agent Memory
+    # Memory
     memory = DemoAgentMemory()
     
-    # 4. Tool Registry and Tools
+    # tools
     tool_registry = ToolRegistry()
-    run_sql_tool = RunSqlTool(runner=sqlite_runner)
+    run_sql_tool = RunSqlTool(sql_runner=sqlite_runner)
     visualize_data_tool = VisualizeDataTool()
-    save_question_tool = SaveQuestionToolArgsTool(memory=memory)
-    search_tool = SearchSavedCorrectToolUsesTool(memory=memory)
+    save_question_tool = SaveQuestionToolArgsTool()
+    search_tool = SearchSavedCorrectToolUsesTool()
     
-    tool_registry.register(run_sql_tool)
-    tool_registry.register(visualize_data_tool)
-    tool_registry.register(save_question_tool)
-    tool_registry.register(search_tool)
+    tool_registry.register_local_tool(run_sql_tool, access_groups=[])
+    tool_registry.register_local_tool(visualize_data_tool, access_groups=[])
+    tool_registry.register_local_tool(save_question_tool, access_groups=[])
+    tool_registry.register_local_tool(search_tool, access_groups=[])
     
     # 5. User Resolver
     user_resolver = SimpleUserResolver()
     
-    # 6. Create Agent with all connected components
+    # agent
     config = AgentConfig()
     agent = Agent(
         config=config,
@@ -64,7 +61,7 @@ def create_agent():
     
     return agent
 
-# Standard export to easily reference in other files
+
 agent = create_agent()
 
 if __name__ == "__main__":

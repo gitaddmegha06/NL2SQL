@@ -5,3 +5,4 @@ plotly
 pandas
 python-dotenv
 google-generativeai
+openai
